@@ -1,0 +1,74 @@
+name: AI Auto Branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "What should the AI do? (e.g. add tests for LogService)"
+        required: true
+        type: string
+
+jobs:
+  ai_branch:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    env:
+      TASK: ${{ github.event.inputs.task }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        run: npm install node-fetch@3
+
+      - name: Run AI code generation
+        env:
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+        run: |
+          node .github/ai/generate_changes.js "$TASK"
+
+      - name: Create and push AI branch
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          SAFE_TASK=$(echo "${TASK}" | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+          BRANCH="ai-${SAFE_TASK}-$(date +%s)"
+
+          git config user.name "ai-bot"
+          git config user.email "ai-bot@example.com"
+
+          git checkout -b "$BRANCH"
+          git status
+          git add .
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit. Exiting."
+            exit 0
+          fi
+
+          git commit -m "AI: ${TASK}"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$BRANCH"
+
+          echo "branch_name=$BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Open PR
+        if: success()
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ steps.ai_branch.outputs.branch_name }}
+          title: "AI: ${{ github.event.inputs.task }}"
+          body: "Automated branch created by AI workflow for task: `${{ github.event.inputs.task }}`."
+          base: main
